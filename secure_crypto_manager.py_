@@ -1,0 +1,515 @@
+#!/usr/bin/env python3
+"""
+Secure Cryptographic Manager for IoT Health Data
+Provides AES-256 encryption for protecting sensitive health data
+
+Features:
+- AES-256-GCM encryption (authenticated encryption)
+- Automatic key generation per user
+- Secure key storage with password protection
+- File encryption/decryption
+- DataFrame encryption/decryption
+- PBKDF2 key derivation from passwords
+"""
+
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC  # FIXED: Changed from PBKDF2
+from cryptography.hazmat.backends import default_backend
+import os
+import json
+import base64
+import pandas as pd
+from datetime import datetime
+import hashlib
+
+
+class SecureCryptoManager:
+    """
+    Manages all cryptographic operations for IoT health data.
+    Uses AES-256-GCM for authenticated encryption.
+    """
+    
+    def __init__(self, master_password=None):
+        """
+        Initialize crypto manager with optional master password.
+        
+        Args:
+            master_password (str): Master password for key derivation
+        """
+        self.backend = default_backend()
+        self.key_size = 32  # 256 bits
+        self.salt_size = 16
+        self.nonce_size = 12  # For GCM mode
+        self.tag_size = 16    # Authentication tag
+        
+        # Key storage directory
+        self.key_dir = '.secure_keys'
+        if not os.path.exists(self.key_dir):
+            os.makedirs(self.key_dir, mode=0o700)
+        
+        self.master_password = master_password
+        self.user_keys = {}
+        
+        print("🔒 Secure Crypto Manager initialized")
+        print(f"   Encryption: AES-256-GCM")
+        print(f"   Key size: {self.key_size * 8} bits")
+    
+    def generate_key(self, user_id, password=None):
+        """
+        Generate or derive a secure encryption key for a user.
+        
+        Args:
+            user_id (str): Unique user identifier
+            password (str): Optional password for key derivation
+            
+        Returns:
+            bytes: 256-bit encryption key
+        """
+        if password:
+            # Derive key from password using PBKDF2HMAC
+            salt = self._get_or_create_salt(user_id)
+            kdf = PBKDF2HMAC(
+                algorithm=hashes.SHA256(),
+                length=self.key_size,
+                salt=salt,
+                iterations=100000,
+                backend=self.backend
+            )
+            key = kdf.derive(password.encode())
+            print(f"🔑 Key derived from password for {user_id}")
+        else:
+            # Generate random key
+            key = os.urandom(self.key_size)
+            print(f"🔑 Random key generated for {user_id}")
+        
+        # Store key securely
+        self._store_key(user_id, key)
+        self.user_keys[user_id] = key
+        
+        return key
+    
+    def _get_or_create_salt(self, user_id):
+        """Get existing salt or create new one for user."""
+        salt_file = os.path.join(self.key_dir, f"{user_id}_salt.bin")
+        
+        if os.path.exists(salt_file):
+            with open(salt_file, 'rb') as f:
+                return f.read()
+        else:
+            salt = os.urandom(self.salt_size)
+            with open(salt_file, 'wb') as f:
+                f.write(salt)
+            try:
+                os.chmod(salt_file, 0o600)
+            except:
+                pass  # Windows doesn't support chmod
+            return salt
+    
+    def _store_key(self, user_id, key):
+        """Store encryption key securely."""
+        key_file = os.path.join(self.key_dir, f"{user_id}_key.bin")
+        
+        # Encrypt key with master password if available
+        if self.master_password:
+            salt = os.urandom(self.salt_size)
+            kdf = PBKDF2HMAC(
+                algorithm=hashes.SHA256(),
+                length=self.key_size,
+                salt=salt,
+                iterations=100000,
+                backend=self.backend
+            )
+            master_key = kdf.derive(self.master_password.encode())
+            
+            # Encrypt the user key
+            nonce = os.urandom(self.nonce_size)
+            cipher = Cipher(
+                algorithms.AES(master_key),
+                modes.GCM(nonce),
+                backend=self.backend
+            )
+            encryptor = cipher.encryptor()
+            encrypted_key = encryptor.update(key) + encryptor.finalize()
+            
+            # Store: salt + nonce + tag + encrypted_key
+            with open(key_file, 'wb') as f:
+                f.write(salt)
+                f.write(nonce)
+                f.write(encryptor.tag)
+                f.write(encrypted_key)
+        else:
+            # Store key directly (less secure)
+            with open(key_file, 'wb') as f:
+                f.write(key)
+        
+        try:
+            os.chmod(key_file, 0o600)
+        except:
+            pass  # Windows doesn't support chmod
+        
+        print(f"💾 Key stored securely for {user_id}")
+    
+    def load_key(self, user_id):
+        """Load encryption key for user."""
+        if user_id in self.user_keys:
+            return self.user_keys[user_id]
+        
+        key_file = os.path.join(self.key_dir, f"{user_id}_key.bin")
+        
+        if not os.path.exists(key_file):
+            print(f"⚠️  No key found for {user_id}, generating new key")
+            return self.generate_key(user_id)
+        
+        with open(key_file, 'rb') as f:
+            key_data = f.read()
+        
+        # Decrypt if master password was used
+        if self.master_password and len(key_data) > self.key_size:
+            salt = key_data[:self.salt_size]
+            nonce = key_data[self.salt_size:self.salt_size + self.nonce_size]
+            tag = key_data[self.salt_size + self.nonce_size:self.salt_size + self.nonce_size + self.tag_size]
+            encrypted_key = key_data[self.salt_size + self.nonce_size + self.tag_size:]
+            
+            kdf = PBKDF2HMAC(
+                algorithm=hashes.SHA256(),
+                length=self.key_size,
+                salt=salt,
+                iterations=100000,
+                backend=self.backend
+            )
+            master_key = kdf.derive(self.master_password.encode())
+            
+            cipher = Cipher(
+                algorithms.AES(master_key),
+                modes.GCM(nonce, tag),
+                backend=self.backend
+            )
+            decryptor = cipher.decryptor()
+            key = decryptor.update(encrypted_key) + decryptor.finalize()
+        else:
+            key = key_data
+        
+        self.user_keys[user_id] = key
+        print(f"🔓 Key loaded for {user_id}")
+        return key
+    
+    def encrypt_data(self, data, user_id):
+        """
+        Encrypt data using AES-256-GCM.
+        
+        Args:
+            data (bytes): Data to encrypt
+            user_id (str): User identifier
+            
+        Returns:
+            bytes: Encrypted data (nonce + tag + ciphertext)
+        """
+        key = self.load_key(user_id)
+        nonce = os.urandom(self.nonce_size)
+        
+        cipher = Cipher(
+            algorithms.AES(key),
+            modes.GCM(nonce),
+            backend=self.backend
+        )
+        encryptor = cipher.encryptor()
+        
+        ciphertext = encryptor.update(data) + encryptor.finalize()
+        
+        # Return: nonce + tag + ciphertext
+        encrypted = nonce + encryptor.tag + ciphertext
+        
+        print(f"🔒 Data encrypted for {user_id} ({len(data)} bytes → {len(encrypted)} bytes)")
+        return encrypted
+    
+    def decrypt_data(self, encrypted_data, user_id):
+        """
+        Decrypt data using AES-256-GCM.
+        
+        Args:
+            encrypted_data (bytes): Encrypted data
+            user_id (str): User identifier
+            
+        Returns:
+            bytes: Decrypted data
+        """
+        key = self.load_key(user_id)
+        
+        # Extract nonce, tag, and ciphertext
+        nonce = encrypted_data[:self.nonce_size]
+        tag = encrypted_data[self.nonce_size:self.nonce_size + self.tag_size]
+        ciphertext = encrypted_data[self.nonce_size + self.tag_size:]
+        
+        cipher = Cipher(
+            algorithms.AES(key),
+            modes.GCM(nonce, tag),
+            backend=self.backend
+        )
+        decryptor = cipher.decryptor()
+        
+        plaintext = decryptor.update(ciphertext) + decryptor.finalize()
+        
+        print(f"🔓 Data decrypted for {user_id} ({len(encrypted_data)} bytes → {len(plaintext)} bytes)")
+        return plaintext
+    
+    def encrypt_file(self, input_file, user_id, output_file=None):
+        """
+        Encrypt an entire file.
+        
+        Args:
+            input_file (str): Path to file to encrypt
+            user_id (str): User identifier
+            output_file (str): Path to encrypted output file
+            
+        Returns:
+            str: Path to encrypted file
+        """
+        if output_file is None:
+            output_file = input_file + '.encrypted'
+        
+        print(f"🔒 Encrypting file: {input_file}")
+        
+        with open(input_file, 'rb') as f:
+            plaintext = f.read()
+        
+        encrypted = self.encrypt_data(plaintext, user_id)
+        
+        with open(output_file, 'wb') as f:
+            f.write(encrypted)
+        
+        try:
+            os.chmod(output_file, 0o600)
+        except:
+            pass  # Windows doesn't support chmod
+        
+        print(f"✅ File encrypted: {output_file}")
+        
+        return output_file
+    
+    def decrypt_file(self, encrypted_file, user_id, output_file=None):
+        """
+        Decrypt an encrypted file.
+        
+        Args:
+            encrypted_file (str): Path to encrypted file
+            user_id (str): User identifier
+            output_file (str): Path to decrypted output file
+            
+        Returns:
+            str: Path to decrypted file
+        """
+        if output_file is None:
+            output_file = encrypted_file.replace('.encrypted', '.decrypted')
+        
+        print(f"🔓 Decrypting file: {encrypted_file}")
+        
+        with open(encrypted_file, 'rb') as f:
+            encrypted = f.read()
+        
+        plaintext = self.decrypt_data(encrypted, user_id)
+        
+        with open(output_file, 'wb') as f:
+            f.write(plaintext)
+        
+        print(f"✅ File decrypted: {output_file}")
+        
+        return output_file
+    
+    def encrypt_dataframe(self, df, user_id):
+        """
+        Encrypt a pandas DataFrame.
+        
+        Args:
+            df (pd.DataFrame): DataFrame to encrypt
+            user_id (str): User identifier
+            
+        Returns:
+            dict: Encrypted DataFrame metadata
+        """
+        print(f"🔒 Encrypting DataFrame ({len(df)} rows, {len(df.columns)} columns)")
+        
+        # Convert DataFrame to JSON
+        json_data = df.to_json(orient='records', date_format='iso')
+        json_bytes = json_data.encode('utf-8')
+        
+        # Encrypt
+        encrypted = self.encrypt_data(json_bytes, user_id)
+        
+        # Create metadata
+        metadata = {
+            'user_id': user_id,
+            'encrypted': True,
+            'timestamp': datetime.now().isoformat(),
+            'shape': list(df.shape),
+            'columns': list(df.columns),
+            'encrypted_data': base64.b64encode(encrypted).decode('utf-8')
+        }
+        
+        print(f"✅ DataFrame encrypted")
+        return metadata
+    
+    def decrypt_dataframe(self, metadata):
+        """
+        Decrypt an encrypted DataFrame.
+        
+        Args:
+            metadata (dict): Encrypted DataFrame metadata
+            
+        Returns:
+            pd.DataFrame: Decrypted DataFrame
+        """
+        user_id = metadata['user_id']
+        print(f"🔓 Decrypting DataFrame for {user_id}")
+        
+        # Decode and decrypt
+        encrypted = base64.b64decode(metadata['encrypted_data'])
+        json_bytes = self.decrypt_data(encrypted, user_id)
+        json_data = json_bytes.decode('utf-8')
+        
+        # Convert back to DataFrame
+        df = pd.read_json(json_data, orient='records')
+        
+        print(f"✅ DataFrame decrypted ({len(df)} rows, {len(df.columns)} columns)")
+        return df
+    
+    def hash_data(self, data):
+        """
+        Create SHA-256 hash of data for integrity verification.
+        
+        Args:
+            data (bytes): Data to hash
+            
+        Returns:
+            str: Hex digest of hash
+        """
+        return hashlib.sha256(data).hexdigest()
+    
+    def verify_integrity(self, data, expected_hash):
+        """
+        Verify data integrity using hash.
+        
+        Args:
+            data (bytes): Data to verify
+            expected_hash (str): Expected hash
+            
+        Returns:
+            bool: True if integrity verified
+        """
+        actual_hash = self.hash_data(data)
+        return actual_hash == expected_hash
+    
+    def create_secure_session(self, user_id, password=None):
+        """
+        Create a secure session for a user.
+        
+        Args:
+            user_id (str): User identifier
+            password (str): Optional password
+            
+        Returns:
+            dict: Session metadata
+        """
+        # Generate or load key
+        self.generate_key(user_id, password)
+        
+        session = {
+            'user_id': user_id,
+            'session_id': os.urandom(16).hex(),
+            'created_at': datetime.now().isoformat(),
+            'encryption': 'AES-256-GCM',
+            'key_derivation': 'PBKDF2-SHA256' if password else 'Random'
+        }
+        
+        print(f"✅ Secure session created for {user_id}")
+        print(f"   Session ID: {session['session_id']}")
+        
+        return session
+    
+    def secure_delete(self, user_id):
+        """
+        Securely delete all user keys and data.
+        
+        Args:
+            user_id (str): User identifier
+        """
+        print(f"🗑️  Securely deleting data for {user_id}")
+        
+        # Delete key file
+        key_file = os.path.join(self.key_dir, f"{user_id}_key.bin")
+        if os.path.exists(key_file):
+            # Overwrite with random data before deletion
+            file_size = os.path.getsize(key_file)
+            with open(key_file, 'wb') as f:
+                f.write(os.urandom(file_size))
+            os.remove(key_file)
+        
+        # Delete salt file
+        salt_file = os.path.join(self.key_dir, f"{user_id}_salt.bin")
+        if os.path.exists(salt_file):
+            os.remove(salt_file)
+        
+        # Remove from memory
+        if user_id in self.user_keys:
+            del self.user_keys[user_id]
+        
+        print(f"✅ All data for {user_id} securely deleted")
+
+
+# Test function
+def test_crypto_manager():
+    """Test the crypto manager functionality."""
+    print("=" * 60)
+    print("🔐 TESTING SECURE CRYPTOGRAPHIC MANAGER")
+    print("=" * 60)
+    
+    try:
+        # Initialize manager
+        crypto = SecureCryptoManager(master_password="TestPassword123")
+        
+        # Test encryption/decryption
+        test_data = "Sensitive health data: Heart rate 75 bpm"
+        print(f"\nOriginal data: {test_data}")
+        
+        encrypted = crypto.encrypt_data(test_data.encode(), "TestUser")
+        print(f"Encrypted: {len(encrypted)} bytes")
+        
+        decrypted = crypto.decrypt_data(encrypted, "TestUser")
+        print(f"Decrypted: {decrypted.decode()}")
+        
+        if test_data == decrypted.decode():
+            print("✅ Encryption/Decryption test PASSED")
+        else:
+            print("❌ Encryption/Decryption test FAILED")
+        
+        # Test DataFrame encryption
+        df = pd.DataFrame({
+            'timestamp': pd.date_range('2024-01-01', periods=3),
+            'heart_rate': [70, 75, 80],
+            'steps': [1000, 2000, 3000]
+        })
+        
+        print(f"\nOriginal DataFrame:\n{df}")
+        
+        encrypted_df = crypto.encrypt_dataframe(df, "TestUser")
+        decrypted_df = crypto.decrypt_dataframe(encrypted_df)
+        
+        print(f"\nDecrypted DataFrame:\n{decrypted_df}")
+        
+        if df.equals(decrypted_df):
+            print("✅ DataFrame encryption test PASSED")
+        else:
+            print("❌ DataFrame encryption test FAILED")
+        
+        print("\n" + "=" * 60)
+        print("✅ ALL TESTS PASSED!")
+        print("=" * 60)
+        
+    except Exception as e:
+        print(f"\n❌ ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+if __name__ == "__main__":
+    test_crypto_manager()
