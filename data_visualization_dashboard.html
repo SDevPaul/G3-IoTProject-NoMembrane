@@ -1,0 +1,902 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Secure IoT Health Data Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- XLSX + Chart.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      min-height: 100vh;
+      padding: 24px;
+      background: radial-gradient(circle at top left,#5b2be0 0,#1c2340 30%,#05222f 70%,#0f5132 100%);
+      color: #f8fafc;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .header {
+      padding: 16px 24px;
+      border-radius: 18px;
+      background: linear-gradient(120deg, rgba(124,58,237,.95), rgba(37,99,235,.9));
+      box-shadow: 0 18px 45px rgba(15,23,42,.55);
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:16px;
+      color:#e5e7eb;
+      animation: slideDown 800ms ease-out;
+    }
+
+    .header-left h1 {
+      font-size: 1.8rem;
+      font-weight: 700;
+      display:flex;
+      align-items:center;
+      gap:8px;
+    }
+    .header-left p { font-size:.9rem; opacity:.9; }
+
+    .badge {
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:6px 14px;
+      border-radius:999px;
+      background:rgba(34,197,94,.16);
+      border:1px solid rgba(74,222,128,.5);
+      font-size:.8rem;
+      color:#bbf7d0;
+    }
+
+    /* Encryption toggle pill */
+    .toggle-wrapper {
+      display:flex;
+      flex-direction:column;
+      align-items:flex-end;
+      gap:4px;
+      font-size:.8rem;
+    }
+    .toggle-label {
+      font-weight:600;
+      text-transform:uppercase;
+      letter-spacing:.08em;
+      opacity:.85;
+    }
+    .switch {
+      position:relative;
+      width:140px;
+      height:32px;
+      border-radius:999px;
+      background:rgba(15,23,42,.7);
+      border:1px solid rgba(148,163,184,.6);
+      cursor:pointer;
+      display:flex;
+      align-items:center;
+      padding:0 4px;
+      overflow:hidden;
+    }
+    .switch-thumb {
+      position:absolute;
+      top:3px;
+      bottom:3px;
+      width:68px;
+      border-radius:999px;
+      background:linear-gradient(120deg,#22c55e,#22d3ee);
+      box-shadow:0 8px 20px rgba(34,197,94,.65);
+      transform:translateX(0);
+      transition:transform .25s cubic-bezier(.4,0,.2,1);
+    }
+    .switch.on .switch-thumb {
+      transform:translateX(70px);
+    }
+    .switch-texts {
+      position:relative;
+      width:100%;
+      display:flex;
+      justify-content:space-between;
+      font-size:.72rem;
+      font-weight:600;
+      text-transform:uppercase;
+    }
+    .switch-texts span {
+      z-index:1;
+      padding:0 6px;
+    }
+
+    /* Status bar */
+    .status-bar {
+      margin-top:18px;
+      padding:12px 18px;
+      border-radius:14px;
+      background:rgba(15,23,42,.8);
+      border:1px solid rgba(148,163,184,.3);
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:16px;
+      font-size:.8rem;
+      color:#e5e7eb;
+      box-shadow:0 16px 40px rgba(15,23,42,.7);
+      animation: fadeIn 800ms ease-out;
+    }
+    .status-group {
+      display:flex;
+      gap:12px;
+      align-items:center;
+    }
+    .status-pill {
+      padding:4px 10px;
+      border-radius:999px;
+      background:rgba(55,65,81,.8);
+      border:1px solid rgba(148,163,184,.4);
+      font-variant-numeric:tabular-nums;
+    }
+    .status-pill.good {
+      background:rgba(22,163,74,.18);
+      border-color:rgba(34,197,94,.8);
+      color:#bbf7d0;
+    }
+
+    .status-message {
+      margin-top:16px;
+      border-radius:12px;
+      padding:10px 14px;
+      font-size:.85rem;
+    }
+    .status-info { background:rgba(37,99,235,.08); border:1px solid rgba(59,130,246,.6); }
+    .status-success { background:rgba(22,163,74,.12); border:1px solid rgba(34,197,94,.8); }
+    .status-error { background:rgba(185,28,28,.12); border:1px solid rgba(248,113,113,.9); }
+
+    /* Import card */
+    .card {
+      margin-top:22px;
+      border-radius:18px;
+      background:radial-gradient(circle at top,rgba(15,23,42,.95),rgba(3,7,18,.96));
+      box-shadow:0 24px 70px rgba(0,0,0,.8);
+      overflow:hidden;
+      animation: rise 850ms ease-out;
+    }
+
+    .card-header {
+      padding:20px 24px;
+      border-bottom:1px solid rgba(55,65,81,.8);
+      background:linear-gradient(120deg,rgba(30,64,175,.9),rgba(34,197,94,.24));
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+    }
+    .card-header h2 {
+      font-size:1.1rem;
+      display:flex;
+      align-items:center;
+      gap:8px;
+    }
+    .card-header p { font-size:.8rem; opacity:.9; }
+
+    .card-body { padding:22px 24px 26px; }
+
+    /* File controls */
+    .file-controls {
+      display:flex;
+      flex-wrap:wrap;
+      gap:12px;
+      align-items:center;
+      justify-content:flex-start;
+    }
+    .file-label {
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:11px 22px;
+      border-radius:999px;
+      background:linear-gradient(120deg,#22c55e,#16a34a);
+      color:#052e16;
+      font-weight:600;
+      cursor:pointer;
+      box-shadow:0 16px 35px rgba(22,163,74,.55);
+      transition:transform .18s ease, box-shadow .18s ease, filter .18s ease;
+    }
+    .file-label:hover {
+      transform:translateY(-1px) scale(1.01);
+      box-shadow:0 20px 45px rgba(22,163,74,.75);
+      filter:brightness(1.03);
+    }
+    .primary-btn {
+      border:none;
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:11px 24px;
+      border-radius:999px;
+      background:linear-gradient(120deg,#3b82f6,#22d3ee);
+      color:#eff6ff;
+      font-weight:600;
+      font-size:.9rem;
+      cursor:pointer;
+      box-shadow:0 16px 40px rgba(37,99,235,.7);
+      transition:transform .18s ease, box-shadow .18s ease, filter .18s ease;
+    }
+    .primary-btn[disabled] {
+      opacity:.45;
+      cursor:not-allowed;
+      box-shadow:none;
+      background:linear-gradient(120deg,#1e293b,#334155);
+    }
+    .primary-btn:not([disabled]):hover {
+      transform:translateY(-1px) scale(1.01);
+      box-shadow:0 20px 55px rgba(37,99,235,.9);
+      filter:brightness(1.05);
+    }
+
+    .helper-text {
+      font-size:.78rem;
+      opacity:.8;
+      margin-top:8px;
+      color:#cbd5f5;
+    }
+
+    /* No data state */
+    .empty {
+      text-align:center;
+      padding:50px 20px;
+      color:#9ca3af;
+      border-radius:16px;
+      background:radial-gradient(circle at top,#020617,#020617 40%,#020617);
+      border:1px dashed rgba(75,85,99,.8);
+      margin-top:24px;
+      animation: fadeIn 600ms ease-out;
+    }
+    .empty-icon {
+      font-size:2.6rem;
+      margin-bottom:12px;
+    }
+    .empty p { font-size:.85rem; }
+
+    /* Stats + charts */
+    .stats-grid {
+      margin-top:28px;
+      display:grid;
+      grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+      gap:16px;
+    }
+    .stat-card {
+      position:relative;
+      border-radius:14px;
+      padding:16px 16px 14px;
+      background:radial-gradient(circle at top,#0b1120,#020617);
+      border:1px solid rgba(55,65,81,.9);
+      box-shadow:0 14px 40px rgba(15,23,42,.9);
+      overflow:hidden;
+      animation: fadeInUp 700ms ease-out;
+    }
+    .stat-card::after {
+      content:"";
+      position:absolute;
+      inset:-40%;
+      background:radial-gradient(circle at top,#22c55e22,#22d3ee05,#312e8110);
+      opacity:0;
+      transition:opacity .3s ease;
+      pointer-events:none;
+    }
+    .stat-card:hover::after { opacity:1; }
+    .stat-label { font-size:.78rem; text-transform:uppercase; letter-spacing:.08em; color:#9ca3af; }
+    .stat-value { margin-top:6px; font-size:1.6rem; font-weight:700; font-variant-numeric:tabular-nums; color:#e5e7eb; }
+
+    .charts-section {
+      margin-top:30px;
+      display:grid;
+      grid-template-columns: minmax(0,1.1fr);
+      gap:18px;
+    }
+
+    .chart-card {
+      position:relative;
+      border-radius:16px;
+      background:radial-gradient(circle at top,#020617,#020617 60%,#020617);
+      border:1px solid rgba(55,65,81,.85);
+      box-shadow:0 22px 60px rgba(15,23,42,.95);
+      padding:18px 18px 20px;
+      overflow:hidden;
+      animation: fadeInUp 750ms ease-out;
+    }
+    .chart-title {
+      font-size:.95rem;
+      font-weight:600;
+      margin-bottom:4px;
+      display:flex;
+      align-items:center;
+      gap:6px;
+    }
+    .chart-sub {
+      font-size:.75rem;
+      color:#9ca3af;
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      margin-bottom:8px;
+    }
+    .chip {
+      padding:3px 8px;
+      border-radius:999px;
+      font-size:.72rem;
+      border:1px solid rgba(148,163,184,.7);
+      color:#cbd5f5;
+    }
+
+    canvas { max-height:360px; }
+
+    /* Table */
+    table {
+      width:100%;
+      border-collapse:collapse;
+      font-size:.78rem;
+      color:#e5e7eb;
+    }
+    thead { background:linear-gradient(90deg,#1e293b,#0f172a); }
+    th, td {
+      padding:8px 10px;
+      border-bottom:1px solid rgba(51,65,85,.9);
+      white-space:nowrap;
+    }
+    tbody tr:nth-child(odd) { background:rgba(15,23,42,.9); }
+    tbody tr:nth-child(even) { background:rgba(15,23,42,.7); }
+    tbody tr:hover { background:rgba(30,64,175,.5); }
+    .activity-pill {
+      display:inline-flex;
+      align-items:center;
+      gap:4px;
+      padding:2px 8px;
+      border-radius:999px;
+      font-size:.72rem;
+      font-weight:500;
+    }
+    .activity-walking { background:rgba(34,197,94,.18); color:#bbf7d0; }
+    .activity-running { background:rgba(239,68,68,.22); color:#fecaca; }
+    .activity-stationary { background:rgba(148,163,184,.22); color:#e5e7eb; }
+
+    /* Privacy footer card */
+    .privacy-card {
+      margin-top:26px;
+      padding:20px 22px;
+      border-radius:18px;
+      background:radial-gradient(circle at top,#facc15,#f97316);
+      color:#1f2937;
+      box-shadow:0 20px 60px rgba(251,191,36,.6);
+      font-size:.86rem;
+    }
+    .privacy-card h3 { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+    .privacy-card ul { margin-left:18px; margin-top:4px; }
+    .privacy-card li { margin:4px 0; }
+
+    .footer {
+      margin-top:18px;
+      text-align:center;
+      font-size:.78rem;
+      color:#e5e7eb;
+      opacity:.8;
+    }
+
+    @keyframes slideDown { from{opacity:0; transform:translateY(-12px);} to{opacity:1; transform:translateY(0);} }
+    @keyframes fadeIn { from{opacity:0;} to{opacity:1;} }
+    @keyframes rise { from{opacity:0; transform:translateY(16px);} to{opacity:1; transform:translateY(0);} }
+    @keyframes fadeInUp { from{opacity:0; transform:translateY(12px);} to{opacity:1; transform:translateY(0);} }
+
+    @media (max-width:768px){
+      body { padding:16px; }
+      .header { flex-direction:column; align-items:flex-start; }
+      .toggle-wrapper { align-items:flex-start; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <!-- TOP BAR -->
+  <header class="header">
+    <div class="header-left">
+      <h1>🔐 Secure IoT Health Data</h1>
+      <p>Local-only processing with AES-256-GCM design – visual encryption toggle only.</p>
+      <div class="badge">🛡️ Encrypted • Private • No Cloud Upload</div>
+    </div>
+
+    <div class="toggle-wrapper">
+      <span class="toggle-label">Encryption View</span>
+      <div id="enc-switch" class="switch on">
+        <div class="switch-thumb"></div>
+        <div class="switch-texts">
+          <span>Off (plain)</span>
+          <span>On (encrypted)</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- STATUS BAR -->
+  <div class="status-bar">
+    <div class="status-group">
+      <span>📎 Session ID</span>
+      <span class="status-pill" id="session-id-pill">--</span>
+    </div>
+    <div class="status-group">
+      <span>📊 Records</span>
+      <span class="status-pill" id="record-count-pill">0</span>
+    </div>
+    <div class="status-group">
+      <span>🔒 Data Status</span>
+      <span class="status-pill good" id="data-status-pill">Encrypted (visual)</span>
+    </div>
+  </div>
+
+  <div id="status-message" class="status-message status-info">
+    📁 Select an Excel/CSV file then click <strong>Process Data</strong> to generate encrypted visualizations.
+  </div>
+
+  <!-- IMPORT CARD -->
+  <section class="card">
+    <div class="card-header">
+      <div>
+        <h2>📁 Import Your Health Data</h2>
+        <p>Supported: <strong>.xlsx</strong>, <strong>.xls</strong>, <strong>.csv</strong>. Data stays in your browser.</p>
+      </div>
+      <div style="font-size:.78rem; text-align:right;">
+        <div>Expected columns:</div>
+        <div>Date / Timestamp • Steps • Distance • Activity • Pace</div>
+      </div>
+    </div>
+
+    <div class="card-body">
+      <div class="file-controls">
+        <input id="file-input" type="file" style="display:none" accept=".xlsx,.xls,.csv" />
+        <label for="file-input" class="file-label">
+          📂 Choose File
+        </label>
+
+        <button id="process-btn" class="primary-btn" disabled>
+          🚀 Process Data
+        </button>
+
+        <span id="file-name" style="font-size:.8rem; opacity:.85;">No file selected yet.</span>
+      </div>
+      <p class="helper-text">Note: All parsing happens locally in your browser. Nothing is uploaded to any server.</p>
+
+      <div id="empty-state" class="empty">
+        <div class="empty-icon">📊</div>
+        <h3>No Data Loaded</h3>
+        <p>Upload a sample_health_data.xlsx file to unlock encrypted charts and the activity table.</p>
+      </div>
+
+      <!-- STATS + CHARTS (hidden until data) -->
+      <div id="viz-section" style="display:none;">
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Total Records</div>
+            <div class="stat-value" id="stat-total-records">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Total Steps</div>
+            <div class="stat-value" id="stat-steps">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Distance (km)</div>
+            <div class="stat-value" id="stat-distance">0.0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Avg Pace (m/s)</div>
+            <div class="stat-value" id="stat-pace">0.0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Unique Users</div>
+            <div class="stat-value" id="stat-users">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Days Covered</div>
+            <div class="stat-value" id="stat-days">0</div>
+          </div>
+        </div>
+
+        <div class="charts-section">
+          <div class="chart-card">
+            <div class="chart-title">📊 Activity Distribution</div>
+            <div class="chart-sub">
+              <span>Breakdown of walking / running / stationary events</span>
+              <span class="chip" id="activity-chip">Encrypted view</span>
+            </div>
+            <canvas id="activity-chart"></canvas>
+          </div>
+
+          <div class="chart-card">
+            <div class="chart-title">📈 Steps Over Time</div>
+            <div class="chart-sub">
+              <span>Daily step counts (last 14 days)</span>
+              <span class="chip" id="steps-chip">Encrypted view</span>
+            </div>
+            <canvas id="steps-chart"></canvas>
+          </div>
+
+          <div class="chart-card">
+            <div class="chart-title">🏃 Pace vs Distance</div>
+            <div class="chart-sub">
+              <span>Each dot = one record</span>
+              <span class="chip" id="pace-chip">Encrypted view</span>
+            </div>
+            <canvas id="pace-chart"></canvas>
+          </div>
+
+          <div class="chart-card">
+            <div class="chart-title">📋 Recent Activity Data</div>
+            <div class="chart-sub">
+              <span>Last 15 rows from your dataset</span>
+              <span class="chip" id="table-chip">Encrypted view</span>
+            </div>
+            <div style="overflow-x:auto;">
+              <table>
+                <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>User</th>
+                  <th>Activity</th>
+                  <th>Steps</th>
+                  <th>Pace (m/s)</th>
+                  <th>Distance (km)</th>
+                </tr>
+                </thead>
+                <tbody id="table-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PRIVACY FOOTER CARD -->
+  <section class="privacy-card">
+    <h3>🔒 Advanced Security & Privacy Features</h3>
+    <ul>
+      <li>AES-256-GCM is the conceptual encryption model for this dashboard’s design.</li>
+      <li>100% local processing – your file never leaves your browser.</li>
+      <li>Visual encryption toggle masks values while keeping analytics accurate.</li>
+      <li>Personal identifiers can be anonymized to “Anonymous_X” for privacy.</li>
+      <li>Designed for GDPR-friendly, privacy-first data exploration.</li>
+      <li>Group Membrane: CYla • Andrea • Paul • Petras</li>
+    </ul>
+  </section>
+
+  <footer class="footer">
+    Secure IoT Health Data Visualization • Purple-Green-Blue Edition • Session: <span id="session-id-footer">--</span>
+  </footer>
+</div>
+
+<script>
+  // ===== GLOBAL STATE =====
+  let rawRows = [];
+  let records = [];
+  let encryptionViewOn = true;
+  let charts = { activity:null, steps:null, pace:null };
+
+  // Simple session id
+  const sessionId = new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+  document.getElementById('session-id-pill').textContent = sessionId;
+  document.getElementById('session-id-footer').textContent = sessionId;
+
+  const fileInput   = document.getElementById('file-input');
+  const processBtn  = document.getElementById('process-btn');
+  const fileNameLbl = document.getElementById('file-name');
+  const statusBox   = document.getElementById('status-message');
+  const emptyState  = document.getElementById('empty-state');
+  const vizSection  = document.getElementById('viz-section');
+
+  // ===== FILE HANDLING =====
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files && fileInput.files[0]) {
+      const f = fileInput.files[0];
+      fileNameLbl.textContent = `Selected: ${f.name}`;
+      processBtn.disabled = false;
+      setStatus(`✅ File selected: ${f.name}. Click "Process Data" to continue.`, "success");
+    } else {
+      fileNameLbl.textContent = "No file selected yet.";
+      processBtn.disabled = true;
+    }
+  });
+
+  processBtn.addEventListener('click', async () => {
+    const file = fileInput.files[0];
+    if (!file) {
+      setStatus("❌ Please choose a file first.", "error");
+      return;
+    }
+    try {
+      processBtn.disabled = true;
+      setStatus("⏳ Processing file... Please wait.", "info");
+      const rows = await readExcelFile(file);
+      rawRows = rows;
+      records = processRows(rows);
+      if (!records.length) {
+        setStatus("⚠️ File loaded but no valid rows found. Check column names.", "error");
+        processBtn.disabled = false;
+        return;
+      }
+      updateAll();
+      setStatus(`✅ Loaded ${records.length} records from "${file.name}".`, "success");
+      document.getElementById('record-count-pill').textContent = records.length.toString();
+      emptyState.style.display = "none";
+      vizSection.style.display = "block";
+    } catch (err) {
+      console.error(err);
+      setStatus("❌ Error reading file: " + err.message, "error");
+    } finally {
+      processBtn.disabled = false;
+    }
+  });
+
+  function readExcelFile(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = e => {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const wb = XLSX.read(data, { type:"array" });
+          const sheet = wb.Sheets[wb.SheetNames[0]];
+          const json = XLSX.utils.sheet_to_json(sheet, { defval:null });
+          resolve(json);
+        } catch (err) { reject(err); }
+      };
+      reader.onerror = () => reject(new Error("Unable to read file"));
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  // Convert sheet rows to normalized records
+  function processRows(rows) {
+    return rows.map((row, idx) => {
+      const ts = row.Date || row.date || row.Timestamp || row.Time || row.time;
+      const steps = Number(row.Steps ?? row.step_count ?? row.StepCount ?? row.steps ?? 0) || 0;
+      const dist  = Number(row.Distance ?? row.distance ?? row.Distance_km ?? 0) || 0;
+      const pace  = Number(row.Pace ?? row.Speed ?? row.pace ?? row.speed ?? 0) || 0;
+      let activity = (row.Activity || row.activity || "").toString().toLowerCase();
+      if (activity.includes("walk")) activity = "walking";
+      else if (activity.includes("run")) activity = "running";
+      else if (activity.includes("station")) activity = "stationary";
+      else activity = "stationary";
+      const user = row.User || row.user || row.User_ID || `Anonymous_${Math.floor(idx/30)+1}`;
+
+      return {
+        timestamp: ts ? new Date(ts) : new Date(),
+        steps,
+        distance: dist,
+        pace,
+        activity,
+        user: String(user)
+      };
+    }).sort((a,b) => a.timestamp - b.timestamp);
+  }
+
+  // ===== VISUAL UPDATE =====
+  function updateAll() {
+    updateStats();
+    drawActivityChart();
+    drawStepsChart();
+    drawPaceChart();
+    drawTable();
+  }
+
+  function updateStats() {
+    const total = records.length;
+    const totalSteps = records.reduce((s,r)=>s+r.steps,0);
+    const totalDist  = records.reduce((s,r)=>s+r.distance,0);
+    const avgPace    = total ? records.reduce((s,r)=>s+r.pace,0)/total : 0;
+    const users      = new Set(records.map(r=>r.user)).size;
+    const dates      = records.map(r=>r.timestamp.getTime());
+    const days       = dates.length ? Math.max(...dates)-Math.min(...dates) : 0;
+    const dayCount   = days ? Math.max(1, Math.round(days/(1000*60*60*24))) : 1;
+
+    document.getElementById('stat-total-records').textContent = total.toLocaleString();
+    document.getElementById('stat-steps').textContent = totalSteps.toLocaleString();
+    document.getElementById('stat-distance').textContent = totalDist.toFixed(2);
+    document.getElementById('stat-pace').textContent = avgPace.toFixed(2);
+    document.getElementById('stat-users').textContent = users.toString();
+    document.getElementById('stat-days').textContent = dayCount.toString();
+  }
+
+  // Charts config helpers – change labels when encrypted view is ON
+  function maybeMaskNumber(value) {
+    return encryptionViewOn ? "████" : value;
+  }
+
+  function drawActivityChart() {
+    const ctx = document.getElementById('activity-chart').getContext('2d');
+    const counts = { walking:0, running:0, stationary:0 };
+    records.forEach(r => { counts[r.activity] = (counts[r.activity] || 0) + 1; });
+
+    const labels = ["Stationary","Walking","Running"];
+    const values = [counts.stationary, counts.walking, counts.running];
+
+    if (charts.activity) charts.activity.destroy();
+    charts.activity = new Chart(ctx, {
+      type:"doughnut",
+      data: {
+        labels,
+        datasets:[{
+          data: values,
+          backgroundColor:["#22c55e","#3b82f6","#f97316"],
+          borderWidth:2,
+          borderColor:"#020617"
+        }]
+      },
+      options:{
+        responsive:true,
+        animation:{ duration:1100, easing:"easeOutQuart" },
+        plugins:{
+          legend:{ position:"bottom", labels:{ color:"#e5e7eb", padding:14 } },
+          tooltip:{
+            callbacks:{
+              label: ctx => {
+                const v = ctx.parsed;
+                return encryptionViewOn ? "Encrypted count" : `${v} records`;
+              }
+            }
+          }
+        }
+      }
+    });
+
+    document.getElementById('activity-chip').textContent =
+      encryptionViewOn ? "Encrypted view" : "Decrypted view";
+  }
+
+  function drawStepsChart() {
+    const ctx = document.getElementById('steps-chart').getContext('2d');
+
+    const daily = {};
+    records.forEach(r => {
+      const k = r.timestamp.toLocaleDateString();
+      daily[k] = (daily[k] || 0) + r.steps;
+    });
+    const labels = Object.keys(daily).slice(-14);
+    const vals = labels.map(l => daily[l]);
+
+    if (charts.steps) charts.steps.destroy();
+    charts.steps = new Chart(ctx, {
+      type:"line",
+      data:{
+        labels,
+        datasets:[{
+          label: encryptionViewOn ? "Encrypted steps" : "Steps",
+          data: vals,
+          borderColor:"#22d3ee",
+          backgroundColor:"rgba(34,211,238,.16)",
+          fill:true,
+          tension:.4,
+          pointRadius:4,
+          pointHoverRadius:6
+        }]
+      },
+      options:{
+        responsive:true,
+        animation:{ duration:1300, easing:"easeInOutQuart" },
+        plugins:{
+          legend:{ labels:{ color:"#e5e7eb" } },
+          tooltip:{
+            callbacks:{
+              label: ctx => {
+                const v = ctx.parsed.y;
+                return encryptionViewOn ? "Encrypted value" : `${v.toLocaleString()} steps`;
+              }
+            }
+          }
+        },
+        scales:{
+          x:{ ticks:{ color:"#9ca3af" } },
+          y:{ ticks:{ color:"#9ca3af" } }
+        }
+      }
+    });
+
+    document.getElementById('steps-chip').textContent =
+      encryptionViewOn ? "Encrypted view" : "Decrypted view";
+  }
+
+  function drawPaceChart() {
+    const ctx = document.getElementById('pace-chart').getContext('2d');
+    const data = records.map(r => ({ x:r.distance, y:r.pace }));
+
+    if (charts.pace) charts.pace.destroy();
+    charts.pace = new Chart(ctx, {
+      type:"scatter",
+      data:{ datasets:[{
+        label: encryptionViewOn ? "Encrypted points" : "Pace vs distance",
+        data,
+        backgroundColor:"rgba(129,140,248,.9)",
+        radius:5,
+        hoverRadius:7
+      }]},
+      options:{
+        responsive:true,
+        animation:{ duration:1200, easing:"easeOutCubic" },
+        scales:{
+          x:{ title:{ display:true, text:"Distance (km)", color:"#cbd5f5" }, ticks:{ color:"#9ca3af" } },
+          y:{ title:{ display:true, text:"Pace (m/s)", color:"#cbd5f5" }, ticks:{ color:"#9ca3af" } }
+        },
+        plugins:{
+          legend:{ labels:{ color:"#e5e7eb" } },
+          tooltip:{
+            callbacks:{
+              label: ctx => {
+                const d = ctx.raw;
+                if (encryptionViewOn) return "Encrypted point";
+                return `Distance ${d.x.toFixed(2)} km, Pace ${d.y.toFixed(2)} m/s`;
+              }
+            }
+          }
+        }
+      }
+    });
+
+    document.getElementById('pace-chip').textContent =
+      encryptionViewOn ? "Encrypted view" : "Decrypted view";
+  }
+
+  function drawTable() {
+    const tbody = document.getElementById('table-body');
+    tbody.innerHTML = "";
+    const recent = records.slice(-15).reverse();
+
+    recent.forEach(r => {
+      const tr = document.createElement('tr');
+      if (encryptionViewOn) {
+        tr.innerHTML = `
+          <td>🔒 ████████</td>
+          <td>🔒 ████████</td>
+          <td><span class="activity-pill activity-stationary">████</span></td>
+          <td>████</td>
+          <td>████</td>
+          <td>████</td>
+        `;
+      } else {
+        tr.innerHTML = `
+          <td>${r.timestamp.toLocaleString()}</td>
+          <td>${r.user}</td>
+          <td><span class="activity-pill activity-${r.activity}">${r.activity}</span></td>
+          <td>${r.steps.toLocaleString()}</td>
+          <td>${r.pace.toFixed(2)}</td>
+          <td>${r.distance.toFixed(2)}</td>
+        `;
+      }
+      tbody.appendChild(tr);
+    });
+
+    document.getElementById('table-chip').textContent =
+      encryptionViewOn ? "Encrypted view" : "Decrypted view";
+  }
+
+  // ===== ENCRYPTION VIEW TOGGLE (NO REAL KEY) =====
+  const encSwitch = document.getElementById('enc-switch');
+  encSwitch.addEventListener('click', () => {
+    encryptionViewOn = !encryptionViewOn;
+    encSwitch.classList.toggle('on', encryptionViewOn);
+    document.getElementById('data-status-pill').textContent =
+      encryptionViewOn ? "Encrypted (visual)" : "Decrypted (visual)";
+    if (records.length) {
+      updateAll();
+    }
+  });
+
+  // ===== STATUS HELPER =====
+  function setStatus(msg, type) {
+    statusBox.className = "status-message status-" + type;
+    statusBox.innerHTML = msg;
+  }
+</script>
+</body>
+</html>
